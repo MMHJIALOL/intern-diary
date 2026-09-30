@@ -1,0 +1,7 @@
+frame 300/1800  115 s
+frame 600/1800  219 s
+frame 900/1800  323 s
+frame 1200/1800  439 s
+frame 1500/1800  607 s
+frame 1800/1800  786 s
+wrote out/film.mp4

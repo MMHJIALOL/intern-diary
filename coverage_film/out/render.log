@@ -1,0 +1,42 @@
+frame 300/900  113 s
+frame 600/900  219 s
+frame 900/900  323 s
+wrote out/film.mp4
+scenes + PNGs written. 899 frame diffs, 37 single-frame pops
+  frame 3 (t=0.050s) diff 9.36 vs 0.00/0.00
+  frame 48 (t=0.800s) diff 3.22 vs 0.57/0.41
+  frame 62 (t=1.033s) diff 2.87 vs 0.53/0.60
+  frame 66 (t=1.100s) diff 2.93 vs 0.50/0.54
+  frame 69 (t=1.150s) diff 2.97 vs 0.83/0.57
+  frame 72 (t=1.200s) diff 3.02 vs 0.60/0.61
+  frame 77 (t=1.283s) diff 3.01 vs 0.96/0.61
+  frame 80 (t=1.333s) diff 3.04 vs 0.62/0.45
+  frame 83 (t=1.383s) diff 3.03 vs 0.73/0.91
+  frame 86 (t=1.433s) diff 3.52 vs 0.76/1.10
+  frame 90 (t=1.500s) diff 3.02 vs 0.95/0.58
+  frame 94 (t=1.567s) diff 2.99 vs 0.58/0.48
+  frame 127 (t=2.117s) diff 3.05 vs 0.19/0.07
+  frame 146 (t=2.433s) diff 9.31 vs 0.01/0.00
+  frame 232 (t=3.867s) diff 1.67 vs 0.52/0.51
+  frame 241 (t=4.017s) diff 2.13 vs 0.49/0.63
+  frame 243 (t=4.050s) diff 1.92 vs 0.63/0.59
+  frame 253 (t=4.217s) diff 1.84 vs 0.45/0.37
+  frame 266 (t=4.433s) diff 2.13 vs 0.34/0.31
+  frame 273 (t=4.550s) diff 1.81 vs 0.22/0.23
+  frame 296 (t=4.933s) diff 5.64 vs 0.00/0.00
+  frame 363 (t=6.050s) diff 1.67 vs 0.38/0.35
+  frame 372 (t=6.200s) diff 1.26 vs 0.26/0.25
+  frame 391 (t=6.517s) diff 1.79 vs 0.47/0.54
+  frame 460 (t=7.667s) diff 1.45 vs 0.47/0.46
+  frame 467 (t=7.783s) diff 1.40 vs 0.46/0.37
+  frame 480 (t=8.000s) diff 1.76 vs 0.41/0.41
+  frame 499 (t=8.317s) diff 1.20 vs 0.24/0.26
+  frame 508 (t=8.467s) diff 1.47 vs 0.13/0.08
+  frame 521 (t=8.683s) diff 1.04 vs 0.02/0.00
+  frame 526 (t=8.767s) diff 2.94 vs 0.02/0.02
+  frame 558 (t=9.300s) diff 9.65 vs 0.00/1.06
+  frame 562 (t=9.367s) diff 9.65 vs 0.00/1.06
+  frame 570 (t=9.500s) diff 2.46 vs 0.00/0.00
+  frame 789 (t=13.150s) diff 1.20 vs 0.30/0.27
+  frame 795 (t=13.250s) diff 1.18 vs 0.14/0.08
+  frame 892 (t=14.867s) diff 8.97 vs 0.01/0.00

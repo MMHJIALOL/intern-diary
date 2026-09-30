@@ -1,0 +1,9 @@
+node_modules/
+*.log
+!*/out/render.log
+compare_film/out/seq/
+compare_film/out/pop/
+coverage_film/out/chk/
+*.aux
+*.out
+*.toc

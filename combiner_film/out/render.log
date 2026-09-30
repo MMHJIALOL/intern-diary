@@ -1,0 +1,13 @@
+frame 300/3600  106 s
+frame 600/3600  210 s
+frame 900/3600  329 s
+frame 1200/3600  450 s
+frame 1500/3600  561 s
+frame 1800/3600  661 s
+frame 2100/3600  765 s
+frame 2400/3600  874 s
+frame 2700/3600  983 s
+frame 3000/3600  1094 s
+frame 3300/3600  1206 s
+frame 3600/3600  1313 s
+wrote out/film.mp4

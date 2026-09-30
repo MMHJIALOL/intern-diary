@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=1920,height=1080">
+<title>DSP Coverage Check</title>
+<style>
+@font-face{font-family:"Inter";font-weight:400;src:url(fonts/inter-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"Inter";font-weight:500;src:url(fonts/inter-latin-500-normal.woff2) format("woff2")}
+@font-face{font-family:"Inter";font-weight:600;src:url(fonts/inter-latin-600-normal.woff2) format("woff2")}
+@font-face{font-family:"Inter";font-weight:700;src:url(fonts/inter-latin-700-normal.woff2) format("woff2")}
+@font-face{font-family:"JBM";font-weight:400;src:url(fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2")}
+@font-face{font-family:"JBM";font-weight:700;src:url(fonts/jetbrains-mono-latin-700-normal.woff2) format("woff2")}
+:root{--canvas:#f5f5f2;--ink:#0e0e10;--blue:#2f6bff;--green:#2ca02c;--orange:#ff6a2a;--grey:#d9d9d4}
+html,body{margin:0;background:var(--canvas)}
+#stage{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--canvas)}
+#world{position:absolute;left:0;top:0;transform-origin:0 0}
+#hud{position:absolute;left:0;top:0;width:1920px;height:1080px;z-index:1000;pointer-events:none}
+.n{position:absolute;left:0;top:0;box-sizing:border-box}
+.t{white-space:pre;color:var(--ink)}
+.i4{font-family:Inter;font-weight:400}.i5{font-family:Inter;font-weight:500}.i6{font-family:Inter;font-weight:600}.i7{font-family:Inter;font-weight:700}
+.m4{font-family:JBM;font-weight:400}.m7{font-family:JBM;font-weight:700}
+.i4,.i5,.i6,.i7{font-feature-settings:"tnum" 1}
+.mask{overflow:hidden}
+svg.ov{position:absolute;left:0;top:0;overflow:visible}
+.g{display:inline-block;vertical-align:-0.06em}
+</style></head>
+<body><div id="stage"><div id="world"></div><div id="hud"></div></div>
+<script>
+'use strict';
+// ================= palette & math =================
+const COL={canvas:'#f5f5f2',ink:'#0e0e10',blue:'#2f6bff',green:'#2ca02c',orange:'#ff6a2a',grey:'#d9d9d4',white:'#ffffff'};
+const clamp=(x,a=0,b=1)=>x<a?a:x>b?b:x, lerp=(a,b,p)=>a+(b-a)*p, P=(t,a,b)=>clamp((t-a)/(b-a));
+const io=p=>p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2, oc=p=>1-Math.pow(1-p,3), ic=p=>p*p*p, sine=p=>(1-Math.cos(Math.PI*p))/2;
+// closed-form damped spring step response (zeta<1 -> tiny overshoot)
+function spr(dt,f=2.2,z=.8){if(dt<=0)return 0;const w=2*Math.PI*f,wd=w*Math.sqrt(1-z*z);return 1-Math.exp(-z*w*dt)*(Math.cos(wd*dt)+z*w/wd*Math.sin(wd*dt));}
+// value with several targets = sum of one spring per change
+function sv(t,keys,f,z){let v=keys[0][1];for(let i=1;i<keys.length;i++)v+=(keys[i][1]-keys[i-1][1])*spr(t-keys[i][0],f,z);return v;}
+function kAt(t,times,d=.4){let k=0;for(const x of times)k+=io(P(t,x,x+d));return k;}
+const R=(x,y,w,h)=>({x,y,w,h}), X=(x0,y0,x1,y1)=>({x:x0,y:y0,w:x1-x0,h:y1-y0});
+const rl=(a,b,p)=>({x:lerp(a.x,b.x,p),y:lerp(a.y,b.y,p),w:lerp(a.w,b.w,p),h:lerp(a.h,b.h,p)});
+function rsp(t,keys,f,z){const o={};for(const c of 'xywh')o[c]=sv(t,keys.map(q=>[q[0],q[1][c]]),f,z);return o;}
+const sh=(r,dx,dy=0)=>({x:r.x+dx,y:r.y+dy,w:r.w,h:r.h});
+const rgb=c=>[1,3,5].map(i=>parseInt(c.slice(i,i+2),16));
+function mix(a,b,p){p=clamp(p);if(p<=0)return a;if(p>=1)return b;const A=rgb(a),B=rgb(b);return '#'+A.map((v,i)=>Math.round(v+(B[i]-v)*p).toString(16).padStart(2,'0')).join('');}
+const hash=(a,b)=>{const s=Math.sin(a*12.9898+b*78.233)*43758.5453;return s-Math.floor(s);};
+
+// ================= DOM helpers =================
+const world=document.getElementById('world'), hud=document.getElementById('hud');
+const CACHE=new Map();let UID=0;
+function st(e,k,v){const id=e.__id||(e.__id=++UID);const key=id+'|'+k;if(CACHE.get(key)!==v){CACHE.set(key,v);e.style[k]=v;}}
+function N(par,cls,z){const e=document.createElement('div');e.className='n'+(cls?' '+cls:'');e.style.zIndex=z;(par||world).appendChild(e);return e;}
+function pos(e,x,y,s){st(e,'transform',`translate(${Math.round(x)}px,${Math.round(y)}px)`+(s!=null&&Math.abs(s-1)>1e-4?` scale(${Math.max(0,s).toFixed(4)})`:''));}
+function box(e,r,s){pos(e,r.x,r.y,s);st(e,'width',Math.max(0,Math.round(r.w))+'px');st(e,'height',Math.max(0,Math.round(r.h))+'px');}
+function show(e,on){st(e,'display',on?'':'none');}
+function wipe(e,p,anchorRight){p=clamp(p);st(e,'clipPath',p>=1?'none':anchorRight?`inset(0 0 0 ${((1-p)*100).toFixed(2)}%)`:`inset(0 ${((1-p)*100).toFixed(2)}% 0 0)`);}
+const ARW='<svg class="g" width="1.05em" height=".62em" viewBox="0 0 21 12"><path d="M1.5 6H18.5M13 1.5L18.8 6L13 10.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const GEQ='<svg class="g" width=".62em" height=".8em" viewBox="0 0 12 16"><path d="M2 2.2L10 6L2 9.8M2 14H10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const rich=s=>esc(s).replace(/→/g,ARW).replace(/≥/g,GEQ);
+function mkT(par,str,font,z,color){const [c,s]=font.split(' ');const e=N(par,'t pt '+c,z);e.style.fontSize=s+'px';e.style.lineHeight=Math.round(s*1.3)+'px';e.innerHTML=rich(str);if(color)e.style.color=color;return e;}
+// masked vertical roll through strings: every text appear/swap/exit goes through its own mask
+const ROLLS=[];
+function mkRoll(par,items,font,z,opt={}){const size=+font.split(' ')[1];const lh=opt.lh||Math.round(size*1.3);
+ const m=N(par,'mask',z);m.style.height=lh+'px';const s=document.createElement('div');s.style.position='absolute';s.style.left='0';s.style.top='0';m.appendChild(s);
+ const els=[];for(const it0 of items){const it=typeof it0==='string'?{s:it0}:it0;const d=document.createElement('div');const [c2,s2]=(it.f||font).split(' ');
+  d.className='t '+c2;d.style.fontSize=s2+'px';d.style.height=lh+'px';d.style.lineHeight=lh+'px';d.style.textAlign=opt.align==='r'?'right':opt.align==='c'?'center':'left';
+  d.innerHTML=it.h||(it.s?rich(it.s):'');if(it.c)d.style.color=it.c;s.appendChild(d);els.push(d);}
+ const r={m,s,lh,els,align:opt.align||'l',w:1,iw:[],k:0};ROLLS.push(r);return r;}
+function measureRolls(){for(const r of ROLLS){r.iw=r.els.map(d=>{const sp=document.createElement('span');sp.style.whiteSpace='pre';sp.innerHTML=d.innerHTML;d.innerHTML='';d.appendChild(sp);return sp.getBoundingClientRect().width;});
+ r.w=Math.ceil(Math.max(1,...r.iw))+2;r.m.style.width=r.w+'px';r.s.style.width=r.w+'px';}}
+function setRoll(r,k){r.k=k;st(r.s,'transform',`translateY(${-Math.round(k*r.lh)}px)`);}
+function placeRoll(r,x,y){pos(r.m,r.align==='r'?x-r.w:r.align==='c'?x-r.w/2:x,y);}
+function rollW(r,k){const a=Math.floor(clamp(k,0,r.iw.length-1)),b=Math.min(a+1,r.iw.length-1);return lerp(r.iw[a],r.iw[b],k-a);}
+// rolling digits: per character slot, a strip of the characters it passes through
+function seqC(a,b,dir){if(a===b)return [a];const D='0123456789',db=D.indexOf(b);let da=D.indexOf(a);
+ if(db>=0&&(da>=0||a===' ')){const out=[a];if(a===' '){da=0;out.push('0');}let g=0;while(da!==db&&g++<20){da=dir>0?(da+1)%10:(da+9)%10;out.push(D[da]);}return out;}
+ return [a,b];}
+const DIGS=[];
+function mkDigits(par,stages,font,z,opt={}){const [cls,sz]=font.split(' ');const size=+sz,lh=opt.lh||Math.round(size*1.3),cw=size*.6,dir=opt.dir||1;
+ const e=N(par,'t '+cls,z);e.style.fontSize=size+'px';e.style.height=lh+'px';e.style.lineHeight=lh+'px';if(opt.c)e.style.color=opt.c;
+ const n=stages[0].length,slots=[];
+ for(let c=0;c<n;c++){let seq=[stages[0][c]];const steps=[];for(let i=1;i<stages.length;i++){const q=seqC(stages[i-1][c],stages[i][c],dir);steps.push(q.length-1);seq=seq.concat(q.slice(1));}
+  if(opt.seqs)seq=opt.seqs[c];
+  const sp=document.createElement('span');sp.style.cssText=`display:inline-block;width:${cw}px;height:${lh}px;overflow:hidden;vertical-align:top`;
+  const inner=document.createElement('div');inner.innerHTML=seq.map(ch=>`<div style="height:${lh}px">${ch===' '?'&nbsp;':esc(ch)}</div>`).join('');sp.appendChild(inner);e.appendChild(sp);slots.push({inner,steps});}
+ const d={e,slots,lh,n,cw,w:cw*n};DIGS.push(d);return d;}
+function setDigits(d,t,times,dur=.55,stag=.03){for(let c=0;c<d.n;c++){const sl=d.slots[c];let k=0;const off=(d.n-1-c)*stag;
+ for(let i=0;i<sl.steps.length;i++)k+=sl.steps[i]*io(P(t,times[i]+off,times[i]+off+dur));st(sl.inner,'transform',`translateY(${-Math.round(k*d.lh)}px)`);}}
+function setSlotK(d,c,k){st(d.slots[c].inner,'transform',`translateY(${-Math.round(k*d.lh)}px)`);}
+const SVGNS='http://www.w3.org/2000/svg';
+function mkSvg(z,par){const s=document.createElementNS(SVGNS,'svg');s.setAttribute('class','ov');s.setAttribute('width','1');s.setAttribute('height','1');s.style.zIndex=z;(par||world).appendChild(s);return s;}
+function mkPath(svg,a){const p=document.createElementNS(SVGNS,'path');for(const k in a)p.setAttribute(k,a[k]);svg.appendChild(p);return p;}
+function setA(p,k,v){const key='_'+k;if(p[key]!==v){p[key]=v;p.setAttribute(k,v);}}
+function polyPart(pts,p){if(p<=0)return '';let L=0;const sg=[];for(let i=1;i<pts.length;i++){const l=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);sg.push(l);L+=l;}
+ let rem=L*clamp(p),d=`M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+ for(let i=1;i<pts.length;i++){const l=sg[i-1];if(rem>=l){d+=`L${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;rem-=l;}else{const q=l?rem/l:0;d+=`L${lerp(pts[i-1][0],pts[i][0],q).toFixed(1)} ${lerp(pts[i-1][1],pts[i][1],q).toFixed(1)}`;break;}}return d;}
+function qpts(a,c,b,n=14){const o=[];for(let i=1;i<=n;i++){const u=i/n;o.push([(1-u)*(1-u)*a[0]+2*(1-u)*u*c[0]+u*u*b[0],(1-u)*(1-u)*a[1]+2*(1-u)*u*c[1]+u*u*b[1]]);}return o;}
+
+// ================= data =================
+const CELLS=['NAND2X1','DFFRQX1','MUX21X2','DECAP8'];
+// design rows (cells.rpt, the Voltus Tcl dump): instance, cell, covered = instance + cell present in DSP
+const DROWS=[['top/u_core/alu/add_23/p0142A','NAND2X1',1],['top/u_core/lsu/mux_07/p0311B','MUX21X2',0],
+ ['top/u_core/reg/dff_19/p0520C','DFFRQX1',1],['top/u_pwr/fill/dcp_04/p0093D','DECAP8',0],
+ ['top/u_dma/fifo/nd2_12/p0187E','NAND2X1',1],['top/u_dma/fifo/mux_31/p0264F','MUX21X2',1],
+ ['top/u_pwr/fill/dcp_11/p0402G','DECAP8',1],['top/u_core/reg/dff_08/p0355H','DFFRQX1',0]];
+const NV=5;                                          // rows on screen in scene 1; the rest wait inside their chunk
+const LN=i=>i>>1, SL=i=>i&1;                         // 4 threads, contiguous chunks of 2
+// DSP rows (switching.dsp): design partner, toggle rate. First 3 on screen, 3-4 sit behind the card.
+const SROWS=[[2,'0.214'],[4,'0.097'],[0,'0.182'],[5,'0.133'],[6,'0.041']];
+const PARTNER={};SROWS.forEach(([p],j)=>PARTNER[p]=j);
+// report (illustrative, from the brief)
+const TAB=[['NAND2X1','412,880','412,880','      0','100.00%',100],['DFFRQX1','198,304','197,911','    393',' 99.80%',99.80],
+ ['MUX21X2',' 86,512',' 86,020','    492',' 99.43%',99.43],['DECAP8',' 61,207',' 58,114','  3,093',' 94.95%',94.95],
+ ['Overall','758,903','754,925','  3,978',' 99.48%',99.48]];
+// seeded PRNG, precomputed once: bucket per key (stand-in for the hash) and chip jitter
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const rnd=mulberry32(20260930),BK=[],OCC=[[],[],[],[]],JIT=[];
+for(const hit of [1,0])DROWS.forEach((r,i)=>{if(r[2]!==hit)return;const f=[0,1,2].filter(c=>!OCC[LN(i)].includes(c));BK[i]=f[Math.floor(rnd()*f.length)];if(hit)OCC[LN(i)].push(BK[i]);});
+SROWS.forEach((_,j)=>JIT[j]=Math.round((rnd()-.5)*70));
+const BINOF=i=>CELLS.indexOf(DROWS[i][1]);
+const BSL=[],ORDER=[];                               // bin slot (found pill at the bottom) and drop order
+CELLS.forEach((_,b)=>DROWS.map((r,i)=>i).filter(i=>BINOF(i)===b).sort((p,q)=>DROWS[q][2]-DROWS[p][2]||p-q).forEach((i,s)=>{BSL[i]=s;ORDER.push(i);}));
+// self-check: table adds up; every hit probes its partner's bucket, every miss an empty one
+function check(){const n=s=>+s.replace(/[^\d.]/g,'');
+ for(let c=1;c<4;c++){let s=0;for(let r=0;r<4;r++)s+=n(TAB[r][c]);if(s!==n(TAB[4][c]))throw new Error('column '+c);}
+ for(const r of TAB){if(n(r[1])-n(r[2])!==n(r[3]))throw new Error('missing '+r[0]);if(Math.abs(n(r[2])/n(r[1])*100-r[5])>.005)throw new Error('coverage '+r[0]);}
+ DROWS.forEach((r,i)=>{const has=OCC[LN(i)].includes(BK[i]);if(r[2]!==(i in PARTNER?1:0)||!!r[2]!==has)throw new Error('bucket '+i);});}
+
+// ================= layout (world px) + timing =================
+const QY=-400;
+const DCARD=X(-920,-250,-120,190), SCARD=X(120,-250,920,70);
+const ROWR=(c,i)=>R(c.x+12,c.y+116+62*i,776,50);
+const LY=l=>-180+120*l, CHUNK=l=>X(-920,LY(l)-44,-700,LY(l)+44);
+const PW=144,PH=44,PILL=(x,y)=>R(x-PW/2,y-PH/2,PW,PH),SLOTX=[-468,-618];
+const GX0=40,GRID=X(40,-240,580,240),BUCK=(l,c)=>X(GX0+180*c+8,LY(l)-52,GX0+180*c+172,LY(l)+52),BCX=c=>GX0+90+180*c;
+const CW=56,CH=18,CHIPHOME=j=>{const p=SROWS[j][0];return R(BCX(BK[p])+JIT[j]-CW/2,LY(LN(p))-46,CW,CH);};
+const PARK=[832,680],XREST=-80;
+const BIN=b=>X(-860+440*b,470,-460+440*b,800),BSLOT=(b,s)=>R(-630+440*b-PW/2,742-52*s,PW,PH);
+const TROW=b=>b<4?X(-820,372+72*b,820,428+72*b):X(-820,676,820,732);
+const COLR=[-230,40,290],BARX=340,BARW=240,PCTR=800;
+const TH=[['Cell',-796,'l'],['Total',-230,'r'],['In DSP',40,'r'],['Missing',290,'r'],['Coverage',340,'l']];
+const TC=i=>5.1+.07*i, LT=i=>5.95+.14*LN(i)+.7*SL(i), HD=1.2, MD=.75;   // row->pill, launch, hit / miss travel
+const CT=j=>2.6+.1*j, DT2=j=>3.5+.13*j;                                   // DSP row->chip, chip drop
+const CS=i=>SLOTX[SL(i)];
+const XP=i=>{let k=0;for(let q=0;q<i;q++)if(LN(q)===LN(i)&&DROWS[q][2])k++;return PARK[k];};
+function inv(f,y){let a=0,b=1;for(let i=0;i<40;i++){const m=(a+b)/2;if(f(m)<y)a=m;else b=m;}return (a+b)/2;}
+const TF=DROWS.map((r,i)=>r[2]?LT(i)+HD*inv(io,(BCX(BK[i])-CS(i))/(XP(i)-CS(i))):LT(i)+MD);   // probe time
+const DRT=i=>9.65+.085*ORDER.indexOf(i), DRD=.75, T5=b=>12.0+.08*b;
+
+// ================= camera: one transform, [t, zoom, x, y], log-space zoom =================
+const CAM=[[0,1,0,-30],[2.5,1.02,0,-10],[5.0,1,20,0],[9.5,1,0,-10],[11.0,1,0,600],[12.0,1,0,600],[13.4,1.04,0,530],[99,1.04,0,530]];
+let ZOOM=1;
+function camera(t){let i=0;while(i<CAM.length-2&&t>=CAM[i+1][0])i++;const a=CAM[i],b=CAM[i+1];const p=io(P(t,a[0],b[0]));
+ const z=Math.exp(lerp(Math.log(a[1]),Math.log(b[1]),p));let s=p;if(Math.abs(Math.log(b[1]/a[1]))>1e-3)s=(1/z-1/a[1])/(1/b[1]-1/a[1]);
+ const x=lerp(a[2],b[2],s),y=lerp(a[3],b[3],s);ZOOM=z;
+ st(world,'transform',`translate(${Math.round(960-x*z)}px,${Math.round(540-y*z)}px) scale(${z.toFixed(5)})`);}
+
+// ================= build (every element declared before the first seek) =================
+const G={};
+function build(){
+ G.q=mkRoll(world,['','is every instance actually covered?',''],'i6 52',40,{align:'c'});
+ G.cards=[0,1].map(c=>{const e=N(world,'',c?20:10);e.style.cssText+=`background:${COL.canvas};border:3px solid ${COL.ink}`;return e;});
+ G.head=[mkRoll(world,['','cells.rpt',{s:'4 threads, one chunk each',f:'i6 32'},''],'m7 30',41),
+         mkRoll(world,['','switching.dsp',{s:'lookup set → instant check',f:'i6 32'},''],'m7 30',41)];
+ G.sub=[mkRoll(world,['','Design: every instance + cell',''],'i5 28',41),mkRoll(world,['','DSP file: instances with switching data',''],'i5 28',41)];
+ G.lnSvg=mkSvg(9);G.ln=[0,2,4].map(()=>mkPath(G.lnSvg,{fill:'none',stroke:COL.ink,'stroke-width':3}));
+ G.chunks=[1,2,3].map(()=>{const e=N(world,'',25);e.style.cssText+=`background:${COL.canvas};border:3px solid ${COL.ink}`;return e;});
+ G.thr=[0,1,2,3].map(l=>mkRoll(world,['',`thread ${l}`,''],'m7 28',42));
+ G.lanes=[0,1,2,3].map(()=>{const e=N(world,'',5);e.style.background=COL.grey;return e;});
+ G.grid=N(world,'',12);G.grid.style.border=`3px solid ${COL.ink}`;
+ G.buck=[...Array(12)].map(()=>{const e=N(world,'',13);e.style.cssText+=`border-style:solid;border-radius:8px`;return e;});
+ G.pills=DROWS.map((r,i)=>{const e=N(world,'',i<NV?30:22);e.style.cssText+='overflow:hidden;border-style:solid';
+   return {e,roll:mkRoll(e,['',`${r[0]}  ${r[1].padEnd(7)}`,{s:r[1],f:'m7 28'},''],'m4 28',1)};});
+ G.chips=SROWS.map(([p,rate],j)=>{const e=N(world,'',j<3?30:15);e.style.cssText+='overflow:hidden;border-style:solid';
+   return {e,roll:j<3?mkRoll(e,['',`${DROWS[p][0]}  ${DROWS[p][1].padEnd(7)}  ${rate}`,''],'m4 28',1):null};});
+ G.linesL=mkRoll(world,['','lines read',''],'i6 30',40,{align:'r'});
+ G.lines=mkDigits(world,['      0',' 94,217','402,655','758,903'],'m7 30',40);
+ G.bins=CELLS.map(c=>{const e=N(world,'',26);e.style.cssText+=`border-style:solid;border-color:${COL.ink}`;return {e,lab:mkRoll(world,['',c],'m7 30',41)};});
+ G.cl=CELLS.map(()=>['total','found','missing'].map(s=>mkRoll(world,['',s,''],'i5 28',41)));
+ G.sq=CELLS.map(()=>[COL.ink,COL.green,COL.orange].map(c=>{const e=N(world,'',41);e.style.background=c;return e;}));
+ G.cnt=CELLS.map((_,b)=>[1,2,3].map(k=>mkDigits(world,['       ',TAB[b][k]],'m7 30',41)));
+ G.th=TH.map(([s,,a])=>mkRoll(world,['',s,''],'i6 28',41,{align:a}));
+ G.thRule=N(world,'',41);G.thRule.style.background=COL.ink;
+ G.track=TAB.map(()=>{const e=N(world,'',29);e.style.background=COL.grey;return e;});
+ G.pct=TAB.map(r=>mkDigits(world,['       ',r[4]],'m7 30',41));
+ G.ovRule=N(world,'',41);G.ovRule.style.background=COL.ink;
+ G.ovLab=mkRoll(world,['','Overall'],'m7 30',41);
+ G.ovCnt=[1,2,3].map(k=>mkDigits(world,['       ',TAB[4][k]],'m7 30',41));
+ G.ovBar=N(world,'',31);G.ovBar.style.cssText+=`background:${COL.orange};border-radius:4px`;
+ G.call=mkRoll(world,['','99.48 % covered'],'i7 48',41,{align:'c'});
+ G.tag=N(hud,'t i6',1);G.tag.style.cssText+=`font-size:28px;line-height:36px;padding:6px 16px;border:2px solid ${COL.ink};border-radius:10px;background:${COL.canvas}`;G.tag.textContent='values illustrative';
+}
+function measure(){measureRolls();G.tagW=G.tag.offsetWidth;G.tagH=G.tag.offsetHeight;}
+
+// ================= 1-2: cards, partner lines, DSP card folds into the grid label =================
+function cpts(a,b,n=24){const o=[a],m=(a[0]+b[0])/2;for(let i=1;i<=n;i++){const u=i/n,v=1-u;o.push([v*v*v*a[0]+3*v*u*(v+u)*m+u*u*u*b[0],(v*v*v+3*v*v*u)*a[1]+(3*v*u*u+u*u*u)*b[1]]);}return o;}
+function gCards(t){
+ placeRoll(G.q,0,QY);setRoll(G.q,kAt(t,[.15,2.5],.45));
+ const dc=rsp(t,[[0,DCARD],[5.05,CHUNK(0)]],1.4,.85);show(G.cards[0],t<9.9);box(G.cards[0],dc,spr(t-.05,1.8,.8)*(1-io(P(t,9.5,9.85))));
+ show(G.cards[1],t<3.45);box(G.cards[1],SCARD,spr(t-.13,1.8,.8));st(G.cards[1],'clipPath',t<3?'none':`inset(0 0 ${(100*io(P(t,3.0,3.45))).toFixed(2)}% 0)`);
+ const hp=spr(t-5.05,1.4,.85),gp=spr(t-3.05,1.4,.85);
+ placeRoll(G.head[0],lerp(DCARD.x+24,-920,hp),lerp(DCARD.y+16,-300,hp));setRoll(G.head[0],kAt(t,[.3,5.1,9.5],.4));
+ placeRoll(G.head[1],lerp(SCARD.x+24,GX0,gp),lerp(SCARD.y+16,-292,gp));setRoll(G.head[1],kAt(t,[.35,3.1,9.5],.4));
+ placeRoll(G.sub[0],DCARD.x+24,DCARD.y+60);setRoll(G.sub[0],kAt(t,[.4,5.0],.4));
+ placeRoll(G.sub[1],SCARD.x+24,SCARD.y+60);setRoll(G.sub[1],kAt(t,[.45,2.6],.4));
+ [0,2,4].forEach((i,n)=>{const y0=ROWR(DCARD,i).y+25,y1=ROWR(SCARD,PARTNER[i]).y+25;
+  setA(G.ln[n],'d',polyPart(cpts([-120,y0],[120,y1]),io(P(t,.7+.12*n,1.2+.12*n))*(1-io(P(t,2.5,2.8)))));});
+}
+
+// ================= DSP rows -> chips -> buckets =================
+function chipPre(j,t){if(j>=3)return R(360+260*(j-3),28,CW,CH);const a=ROWR(SCARD,j);return rl(a,R(a.x+a.w/2-CW/2,a.y+a.h/2-CH/2,CW,CH),spr(t-CT(j),1.6,.85));}
+function gChips(t){for(let j=0;j<SROWS.length;j++){const {e,roll}=G.chips[j],p=SROWS[j][0],k=LN(p)*3+BK[p];
+ const vis=(j<3?t>=.3:t>=1)&&t<9.95;show(e,vis);if(!vis)continue;
+ let r=chipPre(j,t);if(t>DT2(j)){const a=chipPre(j,DT2(j)),q=P(t,DT2(j),DT2(j)+.7);r=rl(a,CHIPHOME(j),io(q));r.y-=90*Math.sin(Math.PI*q);}
+ box(e,r,1-io(P(t,9.55+.02*k,9.85+.02*k)));wipe(e,j<3?io(P(t,.3+.05*j,.65+.05*j)):1);
+ const cp=j<3?io(P(t,CT(j),CT(j)+.3)):1;
+ st(e,'background',mix(mix(COL.canvas,COL.ink,cp),COL.green,io(P(t,TF[p],TF[p]+.12))));
+ st(e,'borderColor',COL.grey);st(e,'borderWidth',(2*(1-cp)).toFixed(2)+'px');st(e,'borderRadius',lerp(4,9,cp).toFixed(1)+'px');
+ if(roll){setRoll(roll,kAt(t,[.35+.05*j,CT(j)],.35));placeRoll(roll,10,5);}}}
+function gGrid(t){
+ const gs=spr(t-2.7,1.6,.85)*(1-io(P(t,9.75,10.05)));show(G.grid,gs>.001);box(G.grid,GRID,gs);
+ for(let k=0;k<12;k++){const e=G.buck[k],l=Math.floor(k/3),c=k%3;const s=spr(t-(2.85+.03*k),2.2,.75)*(1-io(P(t,9.55+.02*k,9.85+.02*k)));
+  show(e,s>.001);box(e,BUCK(l,c),s);let f=0,fc=COL.green;
+  DROWS.forEach((r,i)=>{if(LN(i)!==l||BK[i]!==c)return;const v=Math.sin(Math.PI*P(t,TF[i],TF[i]+.5));if(v>f){f=v;fc=r[2]?COL.green:COL.orange;}});
+  st(e,'borderColor',mix(COL.grey,fc,f));st(e,'borderWidth',(2+3*f).toFixed(2)+'px');}
+}
+
+// ================= 3: chunks, lanes, line counter =================
+function gChunks(t){
+ G.chunks.forEach((e,n)=>{const l=n+1;show(e,t>=5.0&&t<9.95);box(e,rsp(t,[[0,DCARD],[5.05+.05*l,CHUNK(l)]],1.4,.85),1-io(P(t,9.5+.04*l,9.85+.04*l)));});
+ G.thr.forEach((r,l)=>{const c=CHUNK(l);placeRoll(r,c.x+20,c.y+26);setRoll(r,kAt(t,[5.5+.05*l,9.5],.4));});
+ G.lanes.forEach((e,l)=>{const x1=-700+1620*io(P(t,5.45+.05*l,5.95+.05*l)),x0=-700+1620*io(P(t,9.5,9.85));show(e,x1-x0>.5);box(e,R(x0,LY(l)-2,x1-x0,4));});
+ placeRoll(G.linesL,920-G.lines.w-16,-300);setRoll(G.linesL,kAt(t,[5.6,9.5],.4));
+ pos(G.lines.e,920-G.lines.w,-300);setDigits(G.lines,t,[6.1,6.9,7.8],.6,.03);wipe(G.lines.e,t<9?io(P(t,5.6,5.9)):1-io(P(t,9.5,9.8)),t>9);
+}
+
+// ================= design rows -> pills -> lanes -> bins -> bars =================
+function pillLane(i,t){const y=LY(LN(i));const pre=u=>i<NV?rl(ROWR(DCARD,i),PILL(CS(i),y),spr(u-TC(i),1.5,.85)):rl(PILL(-810,y),PILL(CS(i),y),spr(u-(5.6+.05*(i-NV)),1.5,.85));
+ if(t<=LT(i))return pre(t);
+ const x0=pre(LT(i)).x+PW/2,bx=BCX(BK[i]);let x;
+ if(DROWS[i][2])x=lerp(x0,XP(i),io(P(t,LT(i),LT(i)+HD)));
+ else x=t<TF[i]?lerp(x0,bx,Math.pow(P(t,LT(i),TF[i]),2)):bx+(XREST-bx)*spr(t-TF[i],1.5,.55);   // miss bounces off
+ return PILL(x,y);}
+function pillR(i,t){let r=pillLane(i,t);const b=BINOF(i);
+ if(t>DRT(i)){const a=pillLane(i,DRT(i)),p=P(t,DRT(i),DRT(i)+DRD);r=rl(a,BSLOT(b,BSL[i]),io(p));r.y-=140*Math.sin(Math.PI*p);}
+ if(t>T5(b)){r=rl(r,R(BARX,TROW(b).y+18,20,20),spr(t-T5(b),1.4,.85));
+  if(BSL[i]===0)r.w=lerp(r.w,BARW*TAB[b][5]/100,io(P(t,12.9+.1*b,13.6+.1*b)));}
+ return r;}
+function gPills(t){for(let i=0;i<DROWS.length;i++){const {e,roll}=G.pills[i],b=BINOF(i),hit=DROWS[i][2];
+ const vis=(i<NV?t>=.25:t>=5.6)&&!(BSL[i]===1&&t>12.85+.1*b);show(e,vis);if(!vis)continue;
+ box(e,pillR(i,t));wipe(e,i<NV?io(P(t,.25+.05*i,.6+.05*i)):1);
+ const pc=i<NV?io(P(t,TC(i),TC(i)+.35)):1,cf=io(P(t,TF[i],TF[i]+.12)),m5=io(P(t,T5(b),T5(b)+.4));
+ let bg=mix(mix(COL.canvas,COL.grey,pc),hit?COL.green:COL.orange,cf),tc=mix(COL.ink,COL.white,cf),bc=COL.grey,bw=2*(1-pc);
+ if(i===1||i===3){const on=io(P(t,1.35,1.55)),bb=on*(1-io(P(t,1.85,2.15)))*(1-pc);   // no DSP partner: blink once, keep the outline
+  bg=mix(bg,COL.orange,bb);tc=mix(tc,COL.white,bb);bc=mix(bc,COL.orange,on);bw=lerp(2,3,on)*(1-pc);}
+ st(e,'background',mix(bg,TAB[b][5]<100?COL.orange:COL.green,m5));st(e,'borderColor',bc);st(e,'borderWidth',bw.toFixed(2)+'px');
+ st(e,'borderRadius',lerp(lerp(4,22,pc),4,m5).toFixed(1)+'px');st(e,'zIndex',t>11.5?(BSL[i]===0?'31':'30'):(i<NV?'30':'22'));
+ roll.els.forEach(d=>st(d,'color',tc));
+ setRoll(roll,i<NV?kAt(t,[.3+.05*i,TC(i),T5(b)],.4):2+kAt(t,[T5(b)],.4));placeRoll(roll,lerp(10,(PW-roll.iw[2])/2,pc),lerp(5,4,pc));}}
+
+// ================= 4: bins with rolling counters -> 5: table rows =================
+function binR(b,t){const B=BIN(b),g=oc(P(t,9.6+.08*b,10.1+.08*b));if(t<11)return R(B.x,B.y+B.h*(1-g),B.w,B.h*g);return rsp(t,[[0,B],[T5(b),TROW(b)]],1.4,.85);}
+function gBins(t){for(let b=0;b<4;b++){const {e,lab}=G.bins[b],B=BIN(b),r=binR(b,t),mp=io(P(t,T5(b),T5(b)+.5)),p=spr(t-T5(b),1.4,.85);
+ show(e,t>=9.6);box(e,r);st(e,'borderWidth',`0 ${(3*(1-mp)).toFixed(2)}px ${lerp(3,2,mp).toFixed(2)}px`);st(e,'borderBottomColor',mix(COL.ink,COL.grey,mp));
+ placeRoll(lab,r.x+lerp(20,24,mp),r.y+lerp(14,8,mp));setRoll(lab,kAt(t,[9.8+.08*b],.4));
+ for(let k=0;k<3;k++){const yk=B.y+60+44*k,t0=10.8+.05*b+.03*k;
+  placeRoll(G.cl[b][k],B.x+48,yk);setRoll(G.cl[b][k],kAt(t,[t0,T5(b)],.4));
+  const s=spr(t-t0,2.4,.7)*(1-io(P(t,T5(b),T5(b)+.25)));show(G.sq[b][k],s>.001);box(G.sq[b][k],R(B.x+22,yk+12,16,16),s);
+  const d=G.cnt[b][k];show(d.e,t>=10.85);pos(d.e,lerp(B.x+B.w-20,COLR[k],p)-d.w,lerp(yk,TROW(b).y+8,p));setDigits(d,t,[10.9+.08*b+.04*k],.8,.03);}}}
+function gTable(t){
+ G.th.forEach((r,n)=>{placeRoll(r,TH[n][1],310);setRoll(r,kAt(t,[12.35+.04*n],.4));});
+ const w=1640*io(P(t,12.4,12.9));show(G.thRule,w>.5);box(G.thRule,R(-820,356,w,3));
+ const dy=70*(1-spr(t-13.7,1.6,.85));                                  // overall row lands last
+ for(let b=0;b<5;b++){const ov=b===4,y=TROW(b).y+(ov?dy:0),t0=ov?13.85:12.75+.1*b,tw=io(P(t,t0,t0+.35));
+  show(G.track[b],tw>0);box(G.track[b],R(BARX,y+18,BARW,20));wipe(G.track[b],tw);
+  const d=G.pct[b],t1=ov?13.95:12.9+.1*b;show(d.e,t>=t1-.05);pos(d.e,PCTR-d.w,y+8);setDigits(d,t,[t1],.8,.03);}
+ const rw=1640*io(P(t,13.7,14.1));show(G.ovRule,rw>.5);box(G.ovRule,R(-820,664,rw,3));
+ placeRoll(G.ovLab,-796,676+dy+8);setRoll(G.ovLab,kAt(t,[13.75],.4));
+ G.ovCnt.forEach((d,k)=>{show(d.e,t>=13.75);pos(d.e,COLR[k]-d.w,676+dy+8);setDigits(d,t,[13.8+.05*k],.7,.03);});
+ const bw=BARW*TAB[4][5]/100*io(P(t,13.95,14.5));show(G.ovBar,bw>.5);box(G.ovBar,R(BARX,676+dy+18,bw,20));
+ placeRoll(G.call,0,770);setRoll(G.call,kAt(t,[14.3],.45));
+}
+function gHud(t){pos(G.tag,1920-24-G.tagW,1080-24-G.tagH);wipe(G.tag,io(P(t,.2,.55)));}
+
+function seek(t){camera(t);gCards(t);gChips(t);gGrid(t);gChunks(t);gPills(t);gBins(t);gTable(t);gHud(t);}
+
+// ================= checks =================
+function hidden(e){for(let n=e;n&&n!==document.body;n=n.parentElement){const cs=getComputedStyle(n);if(cs.display==='none')return true;if(/inset\(0(px)? 100%|inset\(0(px)? 0(px)? 0(px)? 100%/.test(n.style.clipPath||''))return true;}return false;}
+function audit(){const items=[];const zoomOf=e=>world.contains(e)?ZOOM:1;
+ for(const r of ROLLS){if(hidden(r.m))continue;const k=r.k;if(Math.abs(k-Math.round(k))>1e-3)continue;const i=Math.round(k);const d=r.els[i];if(!d||!r.iw[i])continue;
+  const rc=d.firstChild.getBoundingClientRect();items.push({rc,el:d,px:parseFloat(d.style.fontSize)*zoomOf(r.m),s:d.textContent});}
+ for(const d of DIGS){if(hidden(d.e))continue;items.push({rc:d.e.getBoundingClientRect(),el:d.e,px:parseFloat(d.e.style.fontSize)*zoomOf(d.e),s:d.e.textContent.replace(/\s+/g,'').slice(0,20)});}
+ for(const e of document.querySelectorAll('.pt')){if(hidden(e))continue;items.push({rc:e.getBoundingClientRect(),el:e,px:parseFloat(e.style.fontSize)*zoomOf(e),s:e.textContent});}
+ if(!hidden(G.tag))items.push({rc:G.tag.getBoundingClientRect(),el:G.tag,px:28,s:'values illustrative'});
+ const top=o=>{const x=clamp((o.rc.left+o.rc.right)/2,1,1918),y=clamp((o.rc.top+o.rc.bottom)/2,1,1078),h=document.elementFromPoint(x,y);return h&&(o.el.contains(h)||h.contains(o.el));};
+ const on=items.filter(o=>o.rc.width>1&&o.rc.right>0&&o.rc.left<1920&&o.rc.bottom>0&&o.rc.top<1080&&top(o)),out=[];
+ for(const o of on){if(o.px<27.5)out.push(`small ${o.px.toFixed(1)}px: ${o.s}`);if(o.rc.left<0||o.rc.right>1920||o.rc.top<0||o.rc.bottom>1080)out.push(`edge clip: ${o.s}`);}
+ for(let i=0;i<on.length;i++)for(let j=i+1;j<on.length;j++){const a=on[i].rc,b=on[j].rc;const w=Math.min(a.right,b.right)-Math.max(a.left,b.left),h=Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top);
+  if(w>2&&h>2)out.push(`overlap: "${on[i].s}" x "${on[j].s}"`);}
+ return out;}
+
+async function boot(){await Promise.all(['400','500','600','700'].map(w=>document.fonts.load(`${w} 30px Inter`)).concat(['400','700'].map(w=>document.fonts.load(`${w} 30px JBM`))));
+ await document.fonts.ready;check();build();measure();seek(0);window.READY=true;}
+window.seek=seek;window.audit=audit;boot();
+</script></body></html>
